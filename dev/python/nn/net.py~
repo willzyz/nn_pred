@@ -1,0 +1,295 @@
+#########################################################
+# Net module: build a general multi-layer neural network#
+# layer class: builds layers for the nn                 #
+# Net class:                                            #
+# Methods:                                              #
+# - forward activation                                  #
+# - back-propagation                                    #
+# - check gradients                                     #
+#########################################################
+
+#!/user/bin/python
+
+import sys
+import copy as cp
+from numpy import *
+from nonlin import *
+
+class layerdata(object): ## class that represents data on one layer of the neural network
+    def __init__(self, z, nonlin):
+        self.nonlin = nonlin
+        self.z = z
+        [self.h, self.hg] = self.nonlin.act_and_deriv(z)
+        
+    def __call__(self):
+        return self.h
+    
+    def back_propagate(self, error):
+        self.he = error
+        self.ze = multiply(error, self.hg)
+        return self.ze
+
+class amplayerdata(layerdata):
+    def __init__(self, z, nonlin):
+        self.nonlin = nonlin
+        self.z = z;
+        [self.ht, self.hgt] = self.nonlin.act_and_deriv(z)
+        self.ampnonlin = ampmult()
+        self.h = self.ampnonlin.activate(self.ht[0, :], self.ht[1:self.ht.shape[0], :])
+        
+    def back_propagate(self,error):
+        self.he = error        
+        error = self.ampnonlin.back_propagate(error, self.ht)
+        self.ze = multiply(error, self.hgt)
+        return self.ze
+    
+class amplayerdatamean(layerdata):
+    def __init__(self, z, inmean, nonlin):
+        self.nonlin = nonlin
+        self.z = z
+        [self.ht, self.hgt] = self.nonlin.act_and_deriv(z)
+        #        self.sig = nnsigmoid()
+        #        self.xmean = self.sig.activate(inmean)
+        self.xmean = inmean
+        self.ampnonlin = ampmultmean()
+        self.h = self.ampnonlin.activate(self.xmean, self.ht)
+        
+    def back_propagate(self, error):
+        self.he = error
+        error = self.ampnonlin.back_propagate(self.xmean, error)
+        self.ze = multiply(error, self.hgt)
+        return self.ze
+    
+class layer(object): ## implements a general neural network layer with weight and bias
+    def __init__(self, insz, ousz, nonlin, params): 
+        self.insz = insz
+        self.ousz = ousz
+        self.nonlin = nonlin
+        self.W = matrix(params[0:insz*ousz]).reshape(ousz, insz)
+        self.b = transpose(matrix(params[insz*ousz:len(params)+1]))
+        self.layerdata = None
+    
+    def __call__(self, vec):
+        return self.activate(vec)
+    
+    def __str__(self):
+        return 'nnlayer_insz'+str(self.insz)+'_ousz'+str(self.ousz)+'_nonlin_'+str(self.nonlin)
+    
+    def shape(self):
+        return [self.insz, self.ousz]
+    
+    def activate(self, vec):
+        assert id(type(vec[0])) == id(type(matrix('1')))
+        assert self.W.shape[1] == vec.shape[0]
+        z =self.W*vec+self.b
+        self.layerdata = layerdata(z, self.nonlin)
+        return self.layerdata
+        
+    def act(self, *arg, **kwarg):
+        return self.activate(*arg, **kwarg)
+    
+    def back_propagate(self, error, data):
+        error = self.layerdata.back_propagate(error)
+        bgrad = error.sum(axis=1)            # sum across data examples
+        grad = error*data.transpose()        # out deriv * data'
+        error = self.W.transpose()*error        
+        return [grad, bgrad, error]
+        
+    def bkprop(self, *arg, **kwarg):
+        return self.back_propagate(*arg, **kwarg)
+        
+class amplayer(layer): 
+    def __init__(self, insz, ousz, nonlin, params): 
+        ousz += 1
+        self.insz = insz
+        self.ousz = ousz
+        self.nonlin = nonlin
+        self.W = matrix(params[0:insz*ousz]).reshape(ousz, insz)
+        self.b = transpose(matrix(params[insz*ousz:len(params)+1]))        
+        self.layerdata = None
+    
+    def __call__(self, vec): 
+        return self.activate(vec)
+    
+    def activate(self, vec):
+        self.layerdata = amplayerdata(self.W*vec+self.b, self.nonlin)
+        return self.layerdata
+        
+    def back_propagate(self, error, data):
+        error = self.layerdata.back_propagate(error)        
+        bgrad = error.sum(axis=1)
+        grad = error*data.transpose()
+        error = self.W.transpose()*error
+        return [grad, bgrad, error]
+        
+class amplayermean(layer): 
+    def __init__(self, insz, ousz, nonlin, params): 
+        self.insz = insz
+        self.ousz = ousz
+        self.nonlin = nonlin
+        self.W = matrix(params[0:insz*ousz]).reshape(ousz, insz)
+        self.b = transpose(matrix(params[insz*ousz:len(params)+1]))
+        self.layerdata = None
+        
+    def __call__(self, vec): 
+        return self.activate(vec)
+    
+    def activate(self, vec):
+        #print type(vec)
+        #print vec
+        xmean = sum(vec, axis=0)/vec.shape[0] + 1
+        self.layerdata = amplayerdatamean(self.W*vec+self.b, xmean, self.nonlin)
+        return self.layerdata
+        
+    def back_propagate(self, error, data):
+        error = self.layerdata.back_propagate(error)        
+        bgrad = error.sum(axis=1)
+        grad = error*data.transpose()
+        error = self.W.transpose()*error
+        return [grad, bgrad, error]
+    
+class convlayer(layer):
+    def __init__(self, insz, ousz, nonlin, params):
+        self.insz = insz
+        self.ousz = ousz
+        self.nonlin = nonlin
+        self.W = matrix(params[0:insz*ousz]).reshape(ousz, insz)
+        self.b = transpose(matrix(params[insz*ousz:len(params)+1]))        
+        self.layerdata = None        
+        
+    def activate(self, vec):
+        return
+
+class net(object):
+    def __init__(self, layer_list, cost_function):
+        self.layers = layer_list
+        self.cost_function = cost_function
+    
+    def __call__(self, vec):
+        return self.activate(vec)
+    
+    def __len__(self):
+        return self.numparams();
+    
+    # ----- func: activate the neural network -----
+    # returns 2 element list
+    # [curinput, actlist]
+    # 
+    # curinput: 2 element list
+    #           1st curinput after nonlin activations
+    #           2nd curinput before nonlin activations
+    #
+    # actlist: list containing curinput for each layer
+    
+    def activate(self, vec): 
+        vec = matrix(vec)        
+        for layer in self.layers:
+            vec = layer(vec)()
+        return vec
+    
+    def act(self, *arg, **kwarg):
+        return self.activate(*arg, **kwarg)
+    
+    def back_propagate(self, error, data):
+        G = matrix([])
+        for i in reversed(range(0, len(self.layers))):
+            if i == 0:
+                curdata = data
+            else:
+                curdata = self.layers[i-1].layerdata()
+                
+            [grad, bgrad, error] = self.layers[i].back_propagate(error, curdata)
+            G = concatenate((grad.flatten(), bgrad.T, G), axis=1)
+        return G
+    
+    def bkprop(self, *arg, **kwarg):
+        return self.back_propagate(*arg, **kwarg)
+    
+    def one_d_forward_predict(self, vec, horizon): # takes in list vec
+        pred = []                      # returns list pred
+        curinp = cp.deepcopy(vec)
+        for i in range(horizon):
+            h = self.activate(matrix(curinp).T)
+            h = array(h)[0][0]
+            curinp.pop(0)
+            curinp.append(h)
+            pred.append(h)
+        return pred
+            
+    def numparams(self):
+        num = 0        
+        count = 0
+        while count<len(self.layers):
+            num += size(self.layers[count].W)
+            num += size(self.layers[count].b)
+            count +=1        
+        return num
+    
+    def getparams(self):
+        # [hand tested OK]
+        params = matrix([])
+        for layer in self.layers:
+            params = concatenate((params, layer.W.flatten(), layer.b.T), axis=1)
+        return params
+    
+    def setparams(self, params):
+        # [func tested OK]
+        assert(size(params)==self.numparams());
+        # params = matrix(params);
+        counter = 0;
+        for i in range(0, len(self.layers)):
+            wsz = size(self.layers[i].W)
+            self.layers[i].W = params[0, counter:counter+wsz].reshape(self.layers[i].ousz, self.layers[i].insz)
+            counter += wsz
+            bsz = size(self.layers[i].b)
+            self.layers[i].b = params[0, counter:counter+bsz].T
+            counter += bsz
+        
+    def gradfunc(self, params, vec, target):
+        # make sure target and nn output dimensions are the same
+        assert(self.layers[len(self.layers)-1].ousz == target.shape[0])
+        N = vec.shape[1]
+        self.setparams(params)
+        
+        res = self.activate(vec)
+        #print res
+        #print target
+        
+        if self.cost_function == 'mse':
+            # --- MSE error function ---
+            f = float(0.5*square(res - target).sum(axis=0).sum(axis=1))/float(N)
+            diff = (res - target)/float(N)
+        else:
+            # --- MAPE error function ---
+            f = (sqrt(1e-30+square(res - target))/abs(target+1)).sum(axis=0).sum(axis=1)/float(N)
+            diff =  (res - target)/sqrt(1e-30+square(res - target))/abs(target+1)/float(N)
+        
+        g = self.back_propagate(diff, vec)
+        
+        assert(size(g)==size(params))
+        return [f, g]
+    
+    # ----- func: perform gradient check -----
+    # input: 
+    # eps, gradient checker epsilon
+    # nume, number of examples in the test data snippet (useful to find timing)
+    def gradcheck(self, eps, nume):
+        ## intialize data & target ##
+        data = random.randn(self.layers[0].insz, nume)
+        target = random.randn(self.layers[len(self.layers)-1].ousz, nume)
+        p = self.getparams()
+        F0 = self.gradfunc(p, data, target)
+        G0 = F0[1]
+        Gd = zeros((1, size(p)))
+        gsum = 0
+        for i in range(0, size(p)):
+            eps_v = zeros((1, size(p)))
+            eps_v[0, i] = eps
+            F = self.gradfunc(p + eps_v, data, target)
+            Gd[0, i] = (F[0] - F0[0])/eps;
+            sys.stdout.write('G0 '+str(G0[0, i])+' Gd '+str(Gd[0, i])+'\n')
+            sys.stdout.flush()
+            gsum += square(Gd[0, i]-G0[0, i])
+
+        print 'diff_square_sum = '+str(gsum)
+        return 1

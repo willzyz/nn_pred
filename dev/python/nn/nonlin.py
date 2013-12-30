@@ -1,0 +1,72 @@
+#########################################################
+# Set of non-linearities in a neural network            #
+#########################################################
+
+from numpy import *
+
+class nonlin(object):
+    def __init__(self):
+        return
+    
+    def __call__(self, vec):
+        return self.activate(vec)
+    
+    def activate(self, vec):
+        return vec
+    
+    def derivative(self, vec):
+        return ones((vec.shape[0], vec.shape[1]))
+
+class nntanh(nonlin):
+    def __init__(self):
+        return None
+    
+    def __str__(self):
+        return 'tanh'
+    
+    def activate(self, vec):
+        return tanh(vec)
+    
+    def derivative(self, vec):        
+        return 1-square(tanh(vec))
+    
+    def act_and_deriv(self, vec):
+        a = self.activate(vec)
+        d = 1 - square(a)
+        return [a, d]
+    
+class nnsquash_tanh(nonlin):
+    def __init__(self):
+        self.tanhnl = nntanh()
+        return None
+    
+    def __str__(self):
+        return 'sigmoid'
+    
+    def activate(self, vec):
+        return 0.5*(self.tanhnl.activate(vec)+1)
+    
+    def derivative(self, vec):
+        return 0.5*(1-square(vec)) #self.tanhnl.activate(
+    
+    def act_and_deriv(self, vec):
+        a = self.activate(vec)
+        d = 0.5*(1 - square(a))
+        return [a, d]
+
+class ampmult(nonlin):
+    def activate(self, amp, vec):
+        return multiply(amp, vec)
+        
+    def back_propagate(self, error, h):
+        res = multiply(h[1:h.shape[0], :], error).sum(axis=0)
+        res = concatenate((res, multiply(h[0, :], error)), axis = 0)
+        return res
+
+class ampmultmean(nonlin):
+    def activate(self, xmean, vec):
+        return multiply(xmean, vec)
+        
+    def back_propagate(self, xmean, error):
+        return multiply(xmean, error)
+    

@@ -1,0 +1,20 @@
+[-------- ON-LINE PREDICTION & ANOMALY DETECTION SYSTEM ----------]
+
+[dev/python/nn/ MODULES]:
+
+net       #neural network class
+
+streamer  #time-series streamer
+
+nntrainer #online trainer with online predictor
+
+nonlins   #neural network non-linearities
+
+generator #signal(data) generator
+
+
+[dev/python/test/ TEST SCRIPTS]:
+
+testamp   #test amplitude modulation
+
+testpred  #test time-series prediction
